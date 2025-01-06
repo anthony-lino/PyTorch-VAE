@@ -1,11 +1,11 @@
 import torch
-from models import BaseVAE
+from .base import BaseVAE
 from torch import nn
 from torch.nn import functional as F
 from .types_ import *
 
 
-class VanillaVAE(BaseVAE):
+class FCN_VAE(BaseVAE):
 
 
     def __init__(self,
@@ -13,7 +13,7 @@ class VanillaVAE(BaseVAE):
                  latent_dim: int,
                  hidden_dims: List = None,
                  **kwargs) -> None:
-        super(VanillaVAE, self).__init__()
+        super(FCN_VAE, self).__init__()
 
         self.latent_dim = latent_dim
 
