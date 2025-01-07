@@ -3,7 +3,7 @@ from .base import BaseVAE
 from torch import nn
 from torch.nn import functional as F
 from .types_ import *
-
+import math
 
 class VanillaVAE(BaseVAE):
 
@@ -11,13 +11,25 @@ class VanillaVAE(BaseVAE):
     def __init__(self,
                  in_channels: int,
                  latent_dim: int,
+                 in_dim:List[int],
                  hidden_dims: List = None,
                  **kwargs) -> None:
         super(VanillaVAE, self).__init__()
 
+        final_dim= []
+        for dim in in_dim:
+            dim_temp = dim
+            for NOT_USE in range(len(hidden_dims)-1):
+                dim_temp = math.floor(dim_temp/2)
+            dim_temp = math.floor(dim_temp/2)+1
+            final_dim.append(dim_temp)
+        self.almost_final_dim = final_dim
+        final_dim = hidden_dims[-1]*math.prod(final_dim)
+        
         self.latent_dim = latent_dim
 
         modules = []
+        self.hidden_dims = hidden_dims
         if hidden_dims is None:
             hidden_dims = [32, 64, 128, 256, 512]
 
@@ -33,14 +45,14 @@ class VanillaVAE(BaseVAE):
             in_channels = h_dim
 
         self.encoder = nn.Sequential(*modules)
-        self.fc_mu = nn.Linear(hidden_dims[-1]*4, latent_dim)
-        self.fc_var = nn.Linear(hidden_dims[-1]*4, latent_dim)
+        self.fc_mu = nn.Linear(final_dim, latent_dim)
+        self.fc_var = nn.Linear(final_dim, latent_dim)
 
 
         # Build Decoder
         modules = []
 
-        self.decoder_input = nn.Linear(latent_dim, hidden_dims[-1] * 4)
+        self.decoder_input = nn.Linear(latent_dim, final_dim)
 
         hidden_dims.reverse()
 
@@ -83,7 +95,6 @@ class VanillaVAE(BaseVAE):
         """
         result = self.encoder(input)
         result = torch.flatten(result, start_dim=1)
-
         # Split the result into mu and var components
         # of the latent Gaussian distribution
         mu = self.fc_mu(result)
@@ -99,7 +110,7 @@ class VanillaVAE(BaseVAE):
         :return: (Tensor) [B x C x H x W]
         """
         result = self.decoder_input(z)
-        result = result.view(-1, 512, 2, 2)
+        result = result.view((z.shape[0],self.hidden_dims[0],self.almost_final_dim[1],self.almost_final_dim[0]))
         result = self.decoder(result)
         result = self.final_layer(result)
         return result
@@ -117,8 +128,15 @@ class VanillaVAE(BaseVAE):
         return eps * std + mu
 
     def forward(self, input: Tensor, **kwargs) -> List[Tensor]:
-        mu, log_var = self.encode(input)
-        z = self.reparameterize(mu, log_var)
+        try:
+            mu, log_var = self.encode(input)
+            # print("encoding successful")
+            z = self.reparameterize(mu, log_var)
+        except RuntimeError as e:
+            print(f"Predicted Dim: {self.almost_final_dim}")
+            print(math.prod(self.almost_final_dim))
+            print(f"Input shape{input.shape}")
+            print(e)
         return  [self.decode(z), input, mu, log_var]
 
     def loss_function(self,
@@ -132,12 +150,12 @@ class VanillaVAE(BaseVAE):
         :return:
         """
         recons = args[0]
-        input = args[1]
+        input_func = args[1]
         mu = args[2]
         log_var = args[3]
-
+        resized_input = torch.nn.functional.interpolate(input_func,size=(recons.shape[-2],recons.shape[-1]), mode='bilinear', align_corners=False)
         kld_weight = kwargs['M_N'] # Account for the minibatch samples from the dataset
-        recons_loss =F.mse_loss(recons, input)
+        recons_loss =F.mse_loss(recons, resized_input)
 
 
         kld_loss = torch.mean(-0.5 * torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim = 1), dim = 0)
